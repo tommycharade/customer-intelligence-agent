@@ -42,7 +42,7 @@ async def configured_research(tmp_path, secrets, monkeypatch, saver, fail_once=F
         },
     )
     research = Research(store, secrets, saver)
-    calls = {"read": 0, "search": 0, "verify": 0}
+    calls = {"read": 0, "search": 0, "verify": 0, "roles": [], "preparations": []}
 
     async def read(self, url, domain):
         calls["read"] += 1
@@ -62,7 +62,20 @@ async def configured_research(tmp_path, secrets, monkeypatch, saver, fail_once=F
             {"title": "Northstar Labs", "url": "https://northstar.example/handbook", "content": source_text}
         ]
 
+    async def prepare(settings):
+        calls["preparations"].append(deepcopy(settings))
+
     async def structured(run_id, schema, instructions, data, **kwargs):
+        role = kwargs["role"]
+        expected = (
+            "extraction"
+            if schema in (Candidates, InputReview)
+            else "review"
+            if schema is Verification
+            else "research"
+        )
+        assert role == expected
+        calls["roles"].append(role)
         if schema is Candidates:
             return Candidates(
                 accounts=[
@@ -100,6 +113,7 @@ async def configured_research(tmp_path, secrets, monkeypatch, saver, fail_once=F
 
     monkeypatch.setattr("customer_intelligence.research.PublicReader.read", read)
     research.search.search = search
+    research.model.prepare = prepare
     research.model.structured = structured
     return research, store, calls
 
@@ -115,6 +129,8 @@ async def test_graph_delivers_a_verified_brief_with_bounded_candidates(tmp_path,
         account = store.get("account", run["account_ids"][0])
         assert not account["is_demo"]
         assert calls["verify"] == 1
+        assert {"extraction", "research", "review"} <= set(calls["roles"])
+        assert account["review"]["model"] == Settings().models.review.model
         assert account["brief"]["why_fits"][2]["kind"] == "hypothesis"
 
 
@@ -173,6 +189,7 @@ async def test_replayed_save_retains_recommendation_after_checkpoint_gap(tmp_pat
                 "accepted": [],
                 "index": 0,
                 "assessment": account["brief"],
+                "review": account["review"],
                 "source_ids": account["source_ids"],
             }
         )
@@ -199,3 +216,95 @@ async def test_contextual_chat_withholds_unsupported_facts(tmp_path, secrets, mo
         with pytest.raises(ServiceError, match="could not be supported"):
             await research.chat(account, "Has their budget been approved?")
         assert store.all("chat") == []
+
+
+async def test_resume_and_chat_prepare_original_legacy_settings(tmp_path, secrets, monkeypatch):
+    async with AsyncSqliteSaver.from_conn_string(str(tmp_path / "checkpoints.sqlite3")) as saver:
+        research, store, calls = await configured_research(
+            tmp_path, secrets, monkeypatch, saver, fail_once=True
+        )
+        legacy = Settings().model_dump()
+        legacy.pop("models")
+        legacy["model"] = "anthropic/claude-sonnet-4.6"
+        store.patch("run", "live-run", settings=legacy)
+        await research.execute("live-run", False)
+        assert store.get("run", "live-run")["status"] == "paused"
+        store.put("config", "settings", Settings())
+        await research.execute("live-run", True)
+        account = store.get("account", store.get("run", "live-run")["account_ids"][0])
+        chat_calls = []
+
+        async def answer(run_id, schema, instructions, data, **kwargs):
+            chat_calls.append(kwargs["role"])
+            assert run_id == "live-run"
+            if schema is ChatAnswer:
+                return ChatAnswer(answer="No budget information is provided.", evidence=[])
+            return Verification(supported=True, issues=[])
+
+        research.model.structured = answer
+        await research.chat(account, "Is there a budget?")
+        assert chat_calls == ["research", "review"]
+        assert calls["preparations"] == [legacy, legacy, legacy]
+        assert store.get("run", "live-run")["settings"] == legacy
+        assert store.all("chat")[0]["review"]["model"] == legacy["model"]
+
+
+async def test_old_save_checkpoint_cannot_skip_new_review_gate(tmp_path, secrets, monkeypatch):
+    async with AsyncSqliteSaver.from_conn_string(str(tmp_path / "checkpoints.sqlite3")) as saver:
+        research, store, calls = await configured_research(tmp_path, secrets, monkeypatch, saver)
+        await research.execute("live-run", False)
+        account = store.get("account", store.get("run", "live-run")["account_ids"][0])
+        previous_reviews = calls["verify"]
+        await research.save_account(
+            {
+                "run_id": "live-run",
+                "accepted": [],
+                "index": 0,
+                "assessment": account["brief"],
+                "source_ids": account["source_ids"],
+                "candidates": [{"domain": account["domain"], "name": account["name"]}],
+            }
+        )
+        assert calls["verify"] == previous_reviews + 1
+
+
+async def test_review_gets_original_sources_and_repairs_invalid_output_once(tmp_path, secrets, monkeypatch):
+    from customer_intelligence.providers import StructuredOutputError
+
+    async with AsyncSqliteSaver.from_conn_string(str(tmp_path / "checkpoints.sqlite3")) as saver:
+        research, store, _ = await configured_research(tmp_path, secrets, monkeypatch, saver)
+        await research.execute("live-run", False)
+        account = store.get("account", store.get("run", "live-run")["account_ids"][0])
+        source_id = account["source_ids"][0]
+        source = store.get("source", source_id)
+        source["text"] += "\n" + "x" * 12000 + "\nOriginal source ending."
+        store.put("source", source_id, source)
+        wrapped = research.model.structured
+        counts = {"review": 0, "research": 0}
+
+        async def review(run_id, schema, instructions, data, **kwargs):
+            if schema is Verification:
+                counts["review"] += 1
+                assert data["sources"][0]["text"].endswith("Original source ending.")
+                if counts["review"] == 1:
+                    raise StructuredOutputError("Synthetic invalid review JSON")
+            else:
+                counts["research"] += 1
+                if counts["research"] == 2:
+                    assert "Synthetic invalid review JSON" in data["corrections_required"]
+            result = await wrapped(run_id, schema, instructions, data, **kwargs)
+            if schema is Assessment:
+                result.why_now = None  # Missing timing is a valid, reviewed recommendation.
+            return result
+
+        research.model.structured = review
+        result = await research.assess(
+            {
+                "run_id": "live-run",
+                "index": 0,
+                "source_ids": account["source_ids"],
+                "candidates": [{"domain": account["domain"], "name": account["name"]}],
+            }
+        )
+        assert counts == {"review": 2, "research": 2}
+        assert result["review"]["supported"] and result["assessment"]["why_now"] is None

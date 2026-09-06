@@ -1,5 +1,6 @@
 """Exercise the real local app in an isolated database without paid API calls."""
 
+import json
 import re
 import tempfile
 import threading
@@ -11,6 +12,7 @@ import uvicorn
 from playwright.sync_api import expect, sync_playwright
 
 from customer_intelligence.main import create_app
+from customer_intelligence.models import now
 
 
 class MemorySecrets:
@@ -46,6 +48,22 @@ def main():
                     break
             except httpx.HTTPError:
                 time.sleep(0.1)
+        fixture = json.loads(
+            (Path(__file__).resolve().parents[1] / "tests/fixtures/model_catalogue.json").read_text()
+        )
+        catalogue = app.state.research.model.catalogue
+        refreshes = []
+
+        async def refresh_catalogue(force=False):
+            refreshes.append(force)
+            catalogue.items = {item["id"]: item for item in fixture["models"]}
+            catalogue.endpoints = {}
+            for endpoint in fixture["endpoints"]:
+                catalogue.endpoints.setdefault(endpoint["model_id"], []).append(endpoint)
+            catalogue.fetched_at = now()
+            catalogue.loaded_at = time.monotonic()
+
+        catalogue.refresh = refresh_catalogue
         try:
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch()
@@ -147,6 +165,115 @@ def main():
                 page.get_by_role("button", name="Save key", exact=True).first.click()
                 expect(page.get_by_text("Key saved in Keychain", exact=True)).to_be_visible()
                 assert "synthetic-not-a-real-key" not in page.content()
+                expect(page.locator("#extraction-model")).to_be_enabled()
+                defaults = {
+                    "extraction": "z-ai/glm-5.3-flash",
+                    "research": "z-ai/glm-5.3-flash",
+                    "review": "z-ai/glm-5.3",
+                }
+                for role, model in defaults.items():
+                    expect(page.locator(f"#{role}-model")).to_have_value(model)
+                    expect(page.locator(f"#{role}-effort")).to_have_value(
+                        "high" if role == "review" else "low"
+                    )
+                page.locator("#extraction-search").fill("qwen")
+                expect(
+                    page.locator('#extraction-model option[value="qwen/qwen3.7-flash"]')
+                ).to_have_attribute("disabled", "")
+                expect(
+                    page.get_by_text("No zero-data-retention endpoint is available.", exact=False)
+                ).to_be_visible()
+                page.locator("#extraction-search").fill("")
+                page.locator("#review-search").fill("json-only")
+                expect(page.locator('#review-model option[value="fixture/json-only"]')).to_have_attribute(
+                    "disabled", ""
+                )
+                page.locator("#review-search").fill("")
+                choices = {
+                    "extraction": "fixture/json-only",
+                    "research": "z-ai/glm-5.3",
+                    "review": "anthropic/claude-sonnet-4.6",
+                }
+                for role, model in choices.items():
+                    page.locator(f"#{role}-model").select_option(model)
+                    for other in defaults:
+                        if other != role:
+                            expect(page.locator(f"#{other}-model")).to_have_value(defaults[other])
+                    defaults[role] = model
+                page.locator("#research-effort").select_option("high")
+                page.locator("#review-effort").select_option("max")
+                page.get_by_role("button", name="Save research settings", exact=True).click()
+                expect(page.get_by_text("Settings saved for future runs.", exact=True)).to_be_visible()
+                page.reload()
+                page.get_by_role("button", name="Settings", exact=True).click()
+                for role, model in choices.items():
+                    expect(page.locator(f"#{role}-model")).to_have_value(model)
+                expect(page.locator("#research-effort")).to_have_value("high")
+                expect(page.locator("#review-effort")).to_have_value("max")
+                page.get_by_role("button", name="Restore defaults", exact=True).click()
+                expect(page.get_by_role("button", name="Save research settings", exact=True)).to_be_enabled()
+                page.get_by_role("button", name="Save research settings", exact=True).click()
+                expect(page.get_by_text("Settings saved for future runs.", exact=True)).to_be_visible()
+                assert app.state.store.get("config", "settings")["models"]["review"] == {
+                    "model": "z-ai/glm-5.3",
+                    "reasoning_effort": "high",
+                }
+                fixture["endpoints"][0]["pricing"]["prompt"] = "0.0000002"
+                previous = len(refreshes)
+                page.get_by_role("button", name="Refresh model list", exact=True).click()
+                expect(page.locator(".model-rate").first).to_contain_text("$0.2 input")
+                assert any(refreshes[previous:])
+                page.locator(".task-model-settings").screenshot(path=str(artifacts / "settings-desktop.png"))
+                assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"), (
+                    "Settings desktop overflow"
+                )
+                page.set_viewport_size({"width": 390, "height": 844})
+                page.locator(".task-model-settings").screenshot(path=str(artifacts / "settings-mobile.png"))
+                assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"), (
+                    "Settings mobile overflow"
+                )
+                page.set_viewport_size({"width": 1440, "height": 1000})
+                page.get_by_role("button", name="Research runs", exact=True).click()
+                # Reload returned to live mode; switch to the persisted synthetic demo.
+                page.get_by_role("button", name="Explore a demo", exact=True).click()
+                page.get_by_role("button", name="Research runs", exact=True).click()
+                page.get_by_text("Models and spending", exact=True).click()
+                expect(page.locator(".model-usage-roles")).to_contain_text("z-ai/glm-5.3-flash")
+                expect(page.locator(".model-usage-roles")).to_contain_text("High reasoning")
+                expect(page.get_by_text("No model calls recorded for this run.", exact=True)).to_be_visible()
+                usage_run = app.state.store.get("run", "demo-research") | {
+                    "id": "synthetic-usage-run",
+                    "is_demo": False,
+                    "account_ids": [],
+                    "stage": "Synthetic fixture: model usage display only.",
+                }
+                app.state.store.put("run", usage_run["id"], usage_run)
+                for index, role in enumerate(("extraction", "research", "review"), 1):
+                    charge = app.state.store.reserve(
+                        usage_run["id"],
+                        "OpenRouter",
+                        0.1,
+                        5,
+                        metadata={
+                            "role": role,
+                            **usage_run["settings"]["models"][role],
+                            "purpose": "Synthetic fixture",
+                        },
+                    )
+                    app.state.store.settle(
+                        charge,
+                        index / 100,
+                        provider="Synthetic test provider",
+                        usage={"prompt_tokens": 200, "completion_tokens": 500, "reasoning_tokens": 400},
+                        verdict={"supported": True, "issues": []} if role == "review" else None,
+                    )
+                page.get_by_role("button", name="Exit demo", exact=True).click()
+                page.get_by_text("Models and spending", exact=True).click()
+                expect(page.locator(".model-usage-roles")).to_contain_text("$0.0300")
+                expect(page.locator(".model-call-list")).to_contain_text("Synthetic test provider")
+                expect(page.locator(".model-call-list")).to_contain_text("400 reasoning tokens included")
+                expect(page.locator(".model-call-list")).to_contain_text("Evidence review: supported")
+                page.get_by_role("button", name="Settings", exact=True).click()
                 page.get_by_text("Delete research data", exact=True).first.click()
                 page.get_by_label("Type DELETE to confirm", exact=True).fill("DELETE")
                 page.get_by_role("button", name="Delete research data", exact=True).click()
@@ -177,7 +304,7 @@ def main():
                 assert not errors, errors
                 browser.close()
             print(
-                "Browser checks passed: onboarding, demo, citations, missing timing, outcomes, chat, input import, profile, credentials, deletion, desktop/mobile overflow, mobile focus containment and evidence-request races."
+                "Browser checks passed: onboarding, demo, citations, missing timing, outcomes, chat, input import, profile, credentials, independent model selectors, reasoning, saved settings, defaults, ZDR compatibility, refreshed pricing, run model display, deletion, desktop/mobile overflow, mobile focus containment and evidence-request races."
             )
             print(f"Screenshots: {artifacts}")
         finally:

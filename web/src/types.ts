@@ -2,8 +2,19 @@ export type Profile = {
   offering: string; company_type: string; technology: string; buyer_role: string;
   problem: string; buying_trigger: string; exclusions: string[]; geography: string; trigger_days: number;
 }
+export type ModelRole = 'extraction' | 'research' | 'review'
+export type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+export type RoleModel = {model: string; reasoning_effort: ReasoningEffort | null}
+export type TaskModels = Record<ModelRole, RoleModel>
+export type EndpointPrice = {provider: string; tag: string; structured_outputs: boolean; supported_efforts: ReasoningEffort[]; pricing: {prompt: string; completion: string; overrides?: {min_prompt_tokens: number; prompt?: string; completion?: string}[]}}
+export type CatalogueModel = {
+  id: string; name: string;
+  roles: Record<ModelRole, {compatible: boolean; reason: string | null; endpoint_count: number; supported_efforts: ReasoningEffort[]; prices: EndpointPrice[]}>;
+  reasoning: {supported_efforts: ReasoningEffort[]; mandatory: boolean; default_effort: ReasoningEffort | null};
+}
+export type ModelCatalogue = {models: CatalogueModel[]; fetched_at: string}
 export type Settings = {
-  model: string; model_budget: number; search_budget: number; candidate_limit: number;
+  models: TaskModels; model_budget: number; search_budget: number; candidate_limit: number;
   allowed_domains: string[]; blocked_domains: string[]; browser_fallback: boolean;
 }
 export type SourceType = 'website' | 'documentation' | 'job' | 'discussion' | 'inbound' | 'interview' | 'asset' | 'exclusion' | 'other'
@@ -27,7 +38,14 @@ export type Account = {
   first_recommended_at: string; updated_at: string; run_id: string; is_demo: boolean;
   outcome: {status: OutcomeStatus; note: string; relevant_conversation_at?: string | null};
 }
-export type Costs = {model_usd: number; search_credits: number; has_estimates: boolean}
+export type RoleCosts = {model_usd: number; calls: number; has_estimates: boolean}
+export type Costs = {model_usd: number; search_credits: number; has_estimates: boolean; by_role?: Record<string, RoleCosts>}
+export type ModelCall = {
+  id: string; run_id: string; at: string; role: ModelRole; model: string; reasoning_effort: ReasoningEffort | null;
+  purpose: string; status: string; provider: string | null; actual_model?: string | null;
+  reserved_usd: number; actual_usd: number | null; usage: {prompt_tokens?: number; completion_tokens?: number; reasoning_tokens?: number};
+  verdict: {supported: boolean; issues: string[]} | null;
+}
 export type Run = {
   id: string; created_at: string; completed_at: string | null; is_demo: boolean; status: string;
   stage: string; profile: Profile; settings: Settings; candidate_count: number; processed: number;
@@ -35,7 +53,7 @@ export type Run = {
   input_review: {observations: string[]; hypotheses: string[]};
 }
 export type Bootstrap = {
-  profile: Profile | null; settings: Settings; data_directory: string;
+  profile: Profile | null; settings: Settings; model_defaults: TaskModels; data_directory: string;
   credentials: Record<string, {configured: boolean; environment: boolean}>;
 }
 export type Chat = {id: string; account_id: string; at: string; question: string; answer: string; evidence: Evidence[]}

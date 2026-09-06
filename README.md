@@ -33,7 +33,7 @@ First, use **Explore a demo** to try the workspace without API keys or charges. 
 
 Private data lives in `~/Library/Application Support/Customer Intelligence Agent` (override with `CIA_DATA_DIR`). SQLite stores extracted input text, citations, briefs, run snapshots, chat and outcomes. A separate SQLite file stores LangGraph checkpoints. Files selected for import are parsed locally; the editable extraction is saved only after you choose **Save inputs**. Original file binaries are not retained.
 
-The app is local, but selected excerpts are sent to OpenRouter for inference. Requests require zero-data-retention provider routing and compatible structured outputs. Tavily receives public discovery queries; confidential input text is never used to construct search queries. The application does not send email or access your mailbox, CRM, personal browser sessions or shell through the model.
+The app is local, but selected excerpts are sent to OpenRouter for inference. Every task requires zero-data-retention provider routing. Research and review require provider-enforced JSON schemas; extraction can use JSON output with local schema validation. Tavily receives public discovery queries; confidential input text is never used to construct search queries. The application does not send email or access your mailbox, CRM, personal browser sessions or shell through the model.
 
 Public retrieval respects crawler directives, blocks private/reserved addresses, validates redirects, pins connections to validated public IPs and bounds response sizes. JavaScript fallback uses isolated Chromium with the same retrieval boundary. Pages requiring authentication or human verification are reported as unavailable. Allow/block domain preferences apply to retrieval and discovery.
 
@@ -43,7 +43,25 @@ The graph reviews imported notes, discovers candidates, retrieves source pages, 
 
 Defaults: one on-demand run at a time, ten recommendations maximum, 40 candidates, $5 OpenRouter cap and 100 Tavily search credits. Model calls reserve a conservative maximum using current published pricing and output bounds, then reconcile reported cost. Retries and contextual chat share the run's ledger. Requests with uncertain billing retain their reservation; the UI labels estimates. Search has a separate credit ledger. No paid requests happen in demo mode or automated tests.
 
-The model defaults to `anthropic/claude-sonnet-4.6`. Provider pricing and availability can change; startup checks model capabilities. Provider maximum-price constraints and ZDR are sent on every inference request. A compatible endpoint may be unavailable; the run pauses with an actionable error. Automated validation reduces unsupported claims but does not replace reviewing the evidence.
+### Models by task
+
+In **Settings → Models by task**, search and select a model and supported reasoning effort independently for each task. Incompatible choices are disabled with an explanation. **Refresh model list** reloads provider compatibility and current prices. **Restore defaults** changes the three selections; choose **Save research settings** to apply them.
+
+| Task | Default model | Reasoning | Total output limit | Request timeout |
+| --- | --- | --- | --- | --- |
+| Candidate identification and input-note extraction | `z-ai/glm-5.3-flash` | Low | 4,096 tokens | 300 seconds |
+| Account assessment, brief drafting, repairs and chat | `z-ai/glm-5.3-flash` | Low | 8,192 tokens | 300 seconds |
+| Independent evidence review of briefs and chat | `z-ai/glm-5.3` | High | 16,384 tokens | 600 seconds |
+
+Output limits include reasoning tokens. Every proposed recommendation and chat answer must pass independent review against the original stored sources, in addition to deterministic citation, exclusion and timing checks. A failed result gets one repair and another review; continued failure withholds it. Missing timing is acceptable. These checks reduce unsupported claims but do not replace your review of the evidence.
+
+Each run snapshots the three model IDs and efforts. Saving settings affects future runs; resumes and account chat use the originating run's configuration. Older single-model settings and snapshots resolve that model across all three tasks, retaining provider-default reasoning and the stored historical snapshot.
+
+The app refreshes eligible-provider pricing before each run, resume and live chat, and checks it again at most every five minutes during work. Reservations include reachable context-price tiers, the complete output allowance and reported cache-write/reasoning premiums. Provider maximum-price constraints and ZDR are sent on every inference request; fallback endpoints must fit the same reservation and format requirements. Unavailable or incompatible endpoints pause research with saved progress. Model timeouts and cancellation retain uncertain charges, so a resumed request cannot silently reuse that money.
+
+Rates are read from OpenRouter, including promotional changes, rather than hardcoded. Qwen 3.7 Flash remains unavailable while it has no compatible endpoint on the [OpenRouter ZDR list](https://openrouter.ai/api/v1/endpoints/zdr). See [GLM Flash pricing](https://openrouter.ai/z-ai/glm-5.3-flash) and [provider routing](https://openrouter.ai/docs/guides/routing/provider-selection).
+
+**Research runs → Models and spending** shows the saved choices, spending by task, each call's actual provider, usage (including reasoning when reported) and evidence-review verdict. All tasks, repairs and chat share the same $5 default model budget. Earlier calls without role metadata remain visible as unattributed spending.
 
 ## Inputs and outcomes
 
@@ -51,7 +69,7 @@ Import TXT, Markdown, text-based PDF (100 pages maximum), DOCX, EML and CSV, up 
 
 The primary metric is unique recommended accounts leading to a user-confirmed relevant conversation, grouped by first-recommendation week. Unreviewed and uncontacted accounts stay visible. Demo records are excluded. Feedback informs subsequent runs; the agent does not rewrite your profile automatically.
 
-Markdown/CSV exports include source references. JSON export includes all application records and usage charges, excluding credentials and raw LangGraph checkpoints. Source deletion is blocked when live research history could still reference it; **Delete research data** clears records and checkpoints together. Keychain credentials have separate removal controls. Local disk encryption and backups follow your Mac's settings; the app does not claim application-level database encryption.
+Markdown/CSV exports include source references, model configuration, the account review and model-call records for its entire run (including other accounts and chat). JSON export includes all application records and usage charges, excluding credentials and raw LangGraph checkpoints. Source deletion is blocked when live research history could still reference it; **Delete research data** clears records and checkpoints together. Keychain credentials have separate removal controls. Local disk encryption and backups follow your Mac's settings; the app does not claim application-level database encryption.
 
 ## Development
 

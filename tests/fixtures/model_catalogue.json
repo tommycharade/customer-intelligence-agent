@@ -1,0 +1,180 @@
+{
+  "models": [
+    {
+      "id": "z-ai/glm-5.3-flash",
+      "name": "GLM 5.3 Flash",
+      "supported_parameters": [
+        "structured_outputs",
+        "response_format",
+        "reasoning",
+        "max_tokens"
+      ],
+      "reasoning": {
+        "mandatory": true,
+        "supported_efforts": [
+          "max",
+          "high",
+          "low"
+        ],
+        "default_effort": "max"
+      }
+    },
+    {
+      "id": "z-ai/glm-5.3",
+      "name": "GLM 5.3",
+      "supported_parameters": [
+        "structured_outputs",
+        "response_format",
+        "reasoning",
+        "max_tokens"
+      ],
+      "reasoning": {
+        "mandatory": true,
+        "supported_efforts": [
+          "max",
+          "high",
+          "low"
+        ],
+        "default_effort": "max"
+      }
+    },
+    {
+      "id": "anthropic/claude-sonnet-4.6",
+      "name": "Claude Sonnet 4.6",
+      "supported_parameters": [
+        "structured_outputs",
+        "response_format",
+        "reasoning",
+        "max_tokens"
+      ],
+      "reasoning": {
+        "mandatory": true,
+        "supported_efforts": [
+          "max",
+          "high",
+          "low"
+        ],
+        "default_effort": "max"
+      }
+    },
+    {
+      "id": "fixture/json-only",
+      "name": "JSON-only fixture",
+      "supported_parameters": [
+        "structured_outputs",
+        "response_format",
+        "reasoning",
+        "max_tokens"
+      ],
+      "reasoning": {
+        "mandatory": true,
+        "supported_efforts": [
+          "max",
+          "high",
+          "low"
+        ],
+        "default_effort": "max"
+      }
+    },
+    {
+      "id": "qwen/qwen3.7-flash",
+      "name": "Qwen 3.7 Flash",
+      "supported_parameters": [
+        "structured_outputs",
+        "response_format",
+        "reasoning",
+        "max_tokens"
+      ],
+      "reasoning": {
+        "mandatory": true,
+        "supported_efforts": [
+          "max",
+          "high",
+          "low"
+        ],
+        "default_effort": "max"
+      }
+    }
+  ],
+  "endpoints": [
+    {
+      "model_id": "z-ai/glm-5.3-flash",
+      "provider_name": "Synthetic provider",
+      "tag": "fixture/0",
+      "status": 0,
+      "context_length": 300000,
+      "max_completion_tokens": 32768,
+      "max_prompt_tokens": 260000,
+      "supported_parameters": [
+        "max_tokens",
+        "response_format",
+        "reasoning",
+        "structured_outputs"
+      ],
+      "pricing": {
+        "prompt": "0.0000001",
+        "completion": "0.0000005",
+        "request": "0"
+      }
+    },
+    {
+      "model_id": "z-ai/glm-5.3",
+      "provider_name": "Synthetic provider",
+      "tag": "fixture/1",
+      "status": 0,
+      "context_length": 300000,
+      "max_completion_tokens": 32768,
+      "max_prompt_tokens": 260000,
+      "supported_parameters": [
+        "max_tokens",
+        "response_format",
+        "reasoning",
+        "structured_outputs"
+      ],
+      "pricing": {
+        "prompt": "0.0000001",
+        "completion": "0.0000005",
+        "request": "0"
+      }
+    },
+    {
+      "model_id": "anthropic/claude-sonnet-4.6",
+      "provider_name": "Synthetic provider",
+      "tag": "fixture/2",
+      "status": 0,
+      "context_length": 300000,
+      "max_completion_tokens": 32768,
+      "max_prompt_tokens": 260000,
+      "supported_parameters": [
+        "max_tokens",
+        "response_format",
+        "reasoning",
+        "structured_outputs"
+      ],
+      "pricing": {
+        "prompt": "0.0000001",
+        "completion": "0.0000005",
+        "request": "0"
+      }
+    },
+    {
+      "model_id": "fixture/json-only",
+      "provider_name": "Synthetic provider",
+      "tag": "fixture/3",
+      "status": 0,
+      "context_length": 300000,
+      "max_completion_tokens": 32768,
+      "max_prompt_tokens": 260000,
+      "supported_parameters": [
+        "max_tokens",
+        "response_format",
+        "reasoning"
+      ],
+      "pricing": {
+        "prompt": "0.0000001",
+        "completion": "0.0000005",
+        "request": "0"
+      }
+    }
+  ]
+}

@@ -43,17 +43,12 @@ async def test_blocked_domain_policy_applies_to_subdomains():
         await PublicReader(Settings(blocked_domains=["example.com"])).address("https://docs.example.com")
 
 
-async def test_model_enforces_privacy_schema_and_accounts_for_cost(tmp_path, secrets, monkeypatch):
+async def test_model_enforces_privacy_schema_and_accounts_for_cost(tmp_path, secrets, monkeypatch, catalogue):
     store = Store(tmp_path)
     store.put("run", "test", {"settings": Settings().model_dump()})
     secrets.values["openrouter"] = "test-key"
     model = OpenRouter(store, secrets)
-    model.catalog = {
-        "anthropic/claude-sonnet-4.6": {
-            "supported_parameters": ["tools", "structured_outputs"],
-            "pricing": {"prompt": "0.000003", "completion": "0.000015"},
-        }
-    }
+    model.catalogue = catalogue
     requests = []
 
     def handler(request):
@@ -73,7 +68,9 @@ async def test_model_enforces_privacy_schema_and_accounts_for_cost(tmp_path, sec
         "customer_intelligence.providers.httpx.AsyncClient",
         lambda **kwargs: client_class(transport=httpx.MockTransport(handler), **kwargs),
     )
-    result = await model.structured("test", Verification, "Verify.", {"source": "an observation"})
+    result = await model.structured(
+        "test", Verification, "Verify.", {"source": "an observation"}, role="review"
+    )
     assert result.supported
     assert requests[0]["provider"]["zdr"] is True
     assert requests[0]["provider"]["require_parameters"] is True

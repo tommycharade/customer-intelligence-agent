@@ -20,7 +20,7 @@ from .config import Secrets, data_directory
 from .demo import seed_demo
 from .evidence import canonical_domain, rank_key
 from .imports import MAX_UPLOAD, preview
-from .models import ChatRequest, Outcome, Profile, Settings, Source, now, uid
+from .models import ChatRequest, Outcome, Profile, Settings, Source, TaskModels, now, uid
 from .providers import ServiceError
 from .research import Research
 from .store import BudgetExceeded, Store
@@ -128,13 +128,17 @@ def create_app(directory=None, auth_token=None, secret_store=None):
         return Settings.model_validate(store.get("config", "settings") or {})
 
     def run_view(run):
-        return run | {"costs": store.costs(run["id"])}
+        return run | {
+            "settings": Settings.model_validate(run["settings"]).model_dump(),
+            "costs": store.costs(run["id"]),
+        }
 
     @app.get("/api/bootstrap")
     async def bootstrap():
         return {
             "profile": store.get("config", "profile"),
             "settings": settings().model_dump(),
+            "model_defaults": TaskModels().model_dump(),
             "credentials": credentials.status(),
             "data_directory": str(store.directory),
         }
@@ -147,6 +151,11 @@ def create_app(directory=None, auth_token=None, secret_store=None):
     async def save_settings(value: Settings):
         value.allowed_domains = [canonical_domain(domain) for domain in value.allowed_domains]
         value.blocked_domains = [canonical_domain(domain) for domain in value.blocked_domains]
+        if value.models != settings().models:
+            try:
+                await app.state.research.model.prepare(value.model_dump())
+            except ServiceError as error:
+                raise HTTPException(422, str(error)) from error
         return store.put("config", "settings", value)
 
     @app.put("/api/credentials/{name}")
@@ -163,9 +172,9 @@ def create_app(directory=None, auth_token=None, secret_store=None):
         return credentials.status()
 
     @app.get("/api/models")
-    async def models():
+    async def models(refresh: bool = False):
         try:
-            return await app.state.research.model.models()
+            return await app.state.research.model.models(refresh=refresh)
         except Exception as error:
             raise HTTPException(503, "Could not load the model catalogue. Check your connection.") from error
 
@@ -295,6 +304,11 @@ def create_app(directory=None, auth_token=None, secret_store=None):
     @app.get("/api/runs/{id}")
     async def get_run(id: str):
         return run_view(require("run", id))
+
+    @app.get("/api/runs/{id}/model-calls")
+    async def model_calls(id: str):
+        require("run", id)
+        return [call for call in reversed(store.all("model_call")) if call["run_id"] == id]
 
     @app.get("/api/runs/{id}/events")
     async def run_events(id: str, request: Request):
@@ -450,7 +464,14 @@ def create_app(directory=None, auth_token=None, secret_store=None):
             charges = [dict(row) for row in db.execute("SELECT * FROM charges")]
         return Response(
             json.dumps(
-                {"version": 1, "exported_at": now(), "records": records, "charges": charges}, indent=2
+                {
+                    "version": 2,
+                    "exported_at": now(),
+                    "records": records,
+                    "charges": charges,
+                    "run_costs": {run["id"]: store.costs(run["id"]) for run in store.all("run")},
+                },
+                indent=2,
             ),
             media_type="application/json",
             headers={"Content-Disposition": 'attachment; filename="customer-intelligence.json"'},
@@ -475,6 +496,10 @@ def create_app(directory=None, auth_token=None, secret_store=None):
                     "evidence",
                     "outcome",
                     "synthetic",
+                    "model_configuration",
+                    "evidence_review",
+                    "run_model_calls",
+                    "run_spending_by_role",
                 ]
             )
             values = [
@@ -488,6 +513,12 @@ def create_app(directory=None, auth_token=None, secret_store=None):
                 json.dumps([store.get("source", id) for id in account["source_ids"]]),
                 account["outcome"]["status"],
                 str(account["is_demo"]),
+                json.dumps(
+                    Settings.model_validate(require("run", account["run_id"])["settings"]).models.model_dump()
+                ),
+                json.dumps(account.get("review")),
+                json.dumps([call for call in store.all("model_call") if call["run_id"] == account["run_id"]]),
+                json.dumps(store.costs(account["run_id"])["by_role"]),
             ]
             writer.writerow(
                 [
@@ -534,6 +565,18 @@ def create_app(directory=None, auth_token=None, secret_store=None):
                         f"> {link['quote']}",
                         f"Source: {source['title']} | {source['url'] or 'Imported/synthetic material'} | published: {source['published_at'] or 'unknown'} | retrieved: {source['retrieved_at']}",
                     ]
+        lines += ["\n## Models and usage", "Run-wide usage; includes other accounts and chat in this run."]
+        run_settings = Settings.model_validate(require("run", account["run_id"])["settings"])
+        for role, config in run_settings.models.model_dump().items():
+            lines.append(
+                f"- {role}: {config['model']} ({config['reasoning_effort'] or 'model default'} reasoning)"
+            )
+        lines.append("Costs by role: " + json.dumps(store.costs(account["run_id"])["by_role"]))
+        if account.get("review"):
+            lines.append("Evidence review: " + json.dumps(account["review"]))
+        for call in store.all("model_call"):
+            if call["run_id"] == account["run_id"]:
+                lines.append("Model call: " + json.dumps(call))
         return Response(
             "\n".join(lines),
             media_type="text/markdown",

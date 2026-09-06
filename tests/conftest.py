@@ -1,3 +1,5 @@
+import json
+import time
 from pathlib import Path
 
 import pytest
@@ -46,3 +48,17 @@ def client(app):
 def demo(client):
     client.post("/api/demo")
     return client.get("/api/accounts?demo=true").json()[0]
+
+
+@pytest.fixture
+def catalogue():
+    from customer_intelligence.models import now
+    from customer_intelligence.routing import ModelCatalogue
+
+    data = json.loads((Path(__file__).parent / "fixtures/model_catalogue.json").read_text())
+    result = ModelCatalogue()
+    result.items = {item["id"]: item for item in data["models"]}
+    for endpoint in data["endpoints"]:
+        result.endpoints.setdefault(endpoint["model_id"], []).append(endpoint)
+    result.fetched_at, result.loaded_at = now(), time.monotonic()
+    return result

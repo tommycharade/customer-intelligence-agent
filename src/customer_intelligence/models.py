@@ -2,7 +2,7 @@ from datetime import date, datetime, timezone
 from typing import Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
 
 def uid() -> str:
@@ -15,6 +15,7 @@ def now() -> str:
 
 class Model(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    _call_id: str | None = PrivateAttr(default=None)
 
 
 class Profile(Model):
@@ -129,14 +130,55 @@ class InputReview(Model):
     hypotheses: list[str]
 
 
+ModelRole = Literal["extraction", "research", "review"]
+ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+MODEL_ROLES = ("extraction", "research", "review")
+OUTPUT_LIMITS = {"extraction": 4096, "research": 8192, "review": 16384}
+
+
+class RoleModel(Model):
+    model: str = Field(min_length=1, max_length=200)
+    reasoning_effort: ReasoningEffort | None = None
+
+    @field_validator("model")
+    @classmethod
+    def model_id(cls, value):
+        if not value.strip() or any(character.isspace() for character in value):
+            raise ValueError("Enter a model ID without whitespace")
+        return value
+
+
+class TaskModels(Model):
+    extraction: RoleModel = Field(
+        default_factory=lambda: RoleModel(model="z-ai/glm-5.3-flash", reasoning_effort="low")
+    )
+    research: RoleModel = Field(
+        default_factory=lambda: RoleModel(model="z-ai/glm-5.3-flash", reasoning_effort="low")
+    )
+    review: RoleModel = Field(
+        default_factory=lambda: RoleModel(model="z-ai/glm-5.3", reasoning_effort="high")
+    )
+
+
 class Settings(Model):
-    model: str = "anthropic/claude-sonnet-4.6"
+    models: TaskModels = Field(default_factory=TaskModels)
     model_budget: float = Field(default=5, ge=0.10, le=100)
     search_budget: int = Field(default=100, ge=1, le=1000)
     candidate_limit: int = Field(default=40, ge=1, le=40)
     allowed_domains: list[str] = Field(default_factory=list)
     blocked_domains: list[str] = Field(default_factory=list)
     browser_fallback: bool = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def legacy_model(cls, value):
+        if isinstance(value, dict) and "model" in value:
+            value = dict(value)
+            legacy = value.pop("model")
+            if "models" in value:
+                raise ValueError("Supply task models or a legacy model, not both")
+            value["models"] = {role: {"model": legacy, "reasoning_effort": None} for role in MODEL_ROLES}
+        return value
 
 
 class Outcome(Model):

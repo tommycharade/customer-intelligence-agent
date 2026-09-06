@@ -19,6 +19,7 @@ from .models import (
     uid,
 )
 from .providers import OpenRouter, ServiceError, Tavily
+from .routing import StructuredOutputError
 from .sources import PublicReader, SourceUnavailable
 from .store import BudgetExceeded
 
@@ -31,6 +32,7 @@ class ResearchState(TypedDict, total=False):
     assessment: dict | None
     accepted: list[str]
     input_review: dict
+    review: dict | None
 
 
 class Research:
@@ -83,6 +85,7 @@ class Research:
         self.store.patch("run", run_id, status="running", error=None)
         config = {"configurable": {"thread_id": run_id}, "recursion_limit": 250}
         try:
+            await self.model.prepare(self.store.get("run", run_id)["settings"])
             checkpoint = await self.graph.aget_state(config) if resume else None
             state = (
                 None if checkpoint and checkpoint.values else {"run_id": run_id, "index": 0, "accepted": []}
@@ -149,7 +152,7 @@ class Research:
                         if not account["is_demo"]
                     ][:30],
                 },
-                max_tokens=1500,
+                role="extraction",
             )
             review = result.model_dump()
         self.store.patch("run", state["run_id"], input_review=review)
@@ -182,7 +185,7 @@ class Research:
                 Candidates,
                 "Extract candidate COMPANY accounts from these search leads. Identify canonical company domains. Exclude job boards, publishers, consultancies excluded by the profile, generic forums, vendor directories and aggregators as candidate companies. URLs must be copied exactly from supplied search hits. These snippets are discovery leads, not evidence. Return at most 30 plausible companies; an empty list is valid.",
                 {"profile": run["profile"], "search_leads": hits},
-                max_tokens=3500,
+                role="extraction",
             )
             known_urls = {hit["url"] for hit in hits}
             for account in found.accounts:
@@ -253,7 +256,19 @@ class Research:
                 source_ids.append(source.id)
             except SourceUnavailable as error:
                 self.store.event(state["run_id"], f"Source unavailable for {domain}: {error}", url=url)
-        return {"source_ids": list(dict.fromkeys(source_ids)), "assessment": None}
+        return {"source_ids": list(dict.fromkeys(source_ids)), "assessment": None, "review": None}
+
+    def review_record(self, run_id, verification):
+        call = self.store.get("model_call", verification._call_id) if verification._call_id else None
+        config = Settings.model_validate(self.store.get("run", run_id)["settings"]).models.review
+        return {
+            "call_id": verification._call_id,
+            "model": config.model,
+            "reasoning_effort": config.reasoning_effort,
+            "provider": call.get("provider") if call else None,
+            "at": now(),
+            **verification.model_dump(),
+        }
 
     async def assess(self, state):
         candidate = state["candidates"][state["index"]]
@@ -277,7 +292,7 @@ class Research:
             "today": now()[:10],
             "target": candidate,
             "profile": run["profile"],
-            "background_only": state["input_review"],
+            "background_only": state.get("input_review", {}),
             "sources": [source.model_dump(mode="json") | {"text": source.text[:10000]} for source in sources],
             "assets": [
                 {"id": asset.id, "title": asset.title, "text": asset.text[:2000]} for asset in assets[:20]
@@ -285,31 +300,42 @@ class Research:
         }
         instruction = """Write a short account brief. Assess exactly company_type, technology and workflow criteria with direct evidence. Do not mistake vendor documentation for evidence that a customer uses that vendor. Apply all profile exclusions. Use fit=unknown or weak when evidence is inadequate. Each claim references a supplied source ID and an EXACT continuous quote. Hiring engineers does not establish architecture drift. Include exactly user, champion and budget_holder roles, usually as explicitly uncertain hypotheses; name people only when an excerpt supports their name AND role. why_now is null unless a fact has a genuinely evidenced event date within the profile's trigger_days; retrieval dates are not event dates. Never fabricate a date. Prefer useful conversations when no matching asset exists; mark unbuilt assets proposed_asset. Missing data is preferable to unsupported claims."""
         for attempt in range(2):
-            assessment = await self.model.structured(state["run_id"], Assessment, instruction, data)
-            issues = validate_assessment(
-                assessment, sources, assets, Profile.model_validate(run["profile"]), candidate["domain"]
-            )
-            if not issues:
-                verification = await self.model.structured(
-                    state["run_id"],
-                    Verification,
-                    "Independently audit this brief against ONLY the provided account sources. Fail if any factual claim, criterion support, date, named person's role or claimed absence contradicts or goes beyond its quote and surrounding context. Check company identity and profile exclusions carefully. A quote existing does not mean it entails a claim. Check event dates against the source text; retrieval timestamps are not events. Hypotheses must be plausible, explicitly labelled and distinguish the observation from its inference. Do not punish missing timing or role-only stakeholders. Return supported=false with concrete issues when uncertain about a factual assertion.",
-                    {
-                        "brief": assessment.model_dump(mode="json"),
-                        "sources": data["sources"],
-                        "profile": run["profile"],
-                    },
-                    max_tokens=1800,
+            verification = None
+            try:
+                assessment = await self.model.structured(
+                    state["run_id"], Assessment, instruction, data, role="research"
                 )
-                issues = (
-                    []
-                    if verification.supported
-                    else (
-                        verification.issues or ["The independent evidence check could not support the brief."]
+                issues = validate_assessment(
+                    assessment, sources, assets, Profile.model_validate(run["profile"]), candidate["domain"]
+                )
+                if not issues:
+                    self.stage(state, f"Reviewing evidence for {candidate['name']}")
+                    verification = await self.model.structured(
+                        state["run_id"],
+                        Verification,
+                        "Independently audit this brief against ONLY the provided account sources. Fail if any factual claim, criterion support, date, named person's role or claimed absence contradicts or goes beyond its quote and surrounding context. Check company identity and profile exclusions carefully. A quote existing does not mean it entails a claim. Check event dates against the source text; retrieval timestamps are not events. Hypotheses must be plausible, explicitly labelled and distinguish the observation from its inference. Do not punish missing timing or role-only stakeholders. Return supported=false with concrete issues when uncertain about a factual assertion.",
+                        {
+                            "brief": assessment.model_dump(mode="json"),
+                            "sources": [source.model_dump(mode="json") for source in sources],
+                            "profile": run["profile"],
+                        },
+                        role="review",
                     )
-                )
-            if not issues:
-                return {"assessment": assessment.model_dump(mode="json")}
+                    issues = (
+                        []
+                        if verification.supported
+                        else (
+                            verification.issues
+                            or ["The independent evidence check could not support the brief."]
+                        )
+                    )
+            except StructuredOutputError as error:
+                issues = [str(error)]
+            if not issues and verification is not None:
+                return {
+                    "assessment": assessment.model_dump(mode="json"),
+                    "review": self.review_record(state["run_id"], verification),
+                }
             data["corrections_required"] = issues
             if attempt == 0:
                 self.store.event(state["run_id"], f"Checking corrections for {candidate['domain']}.")
@@ -320,6 +346,10 @@ class Research:
         return {"assessment": None}
 
     async def save_account(self, state):
+        # Older checkpoints can arrive here without a recorded verdict. Review them
+        # with their original model settings before allowing a recommendation.
+        if state.get("assessment") and not (state.get("review") or {}).get("supported"):
+            state = {**state, **await self.assess(state)}
         accepted = list(state["accepted"])
         if state["assessment"]:
             brief = Assessment.model_validate(state["assessment"])
@@ -342,6 +372,7 @@ class Research:
                         "domain": domain,
                         "name": brief.company_name,
                         "brief": brief.model_dump(mode="json"),
+                        "review": state["review"],
                         "source_ids": state["source_ids"],
                         "first_recommended_at": previous["first_recommended_at"] if previous else now(),
                         "updated_at": now(),
@@ -368,7 +399,13 @@ class Research:
                     f"{brief.company_name}: not recommended ({', '.join(brief.matched_exclusions) or 'insufficient demonstrated fit'}).",
                 )
         self.store.patch("run", state["run_id"], processed=state["index"] + 1, account_ids=accepted)
-        return {"index": state["index"] + 1, "accepted": accepted, "assessment": None, "source_ids": []}
+        return {
+            "index": state["index"] + 1,
+            "accepted": accepted,
+            "assessment": None,
+            "source_ids": [],
+            "review": None,
+        }
 
     async def finish(self, state):
         count = len(state["accepted"])
@@ -398,34 +435,46 @@ class Research:
                 evidence=[],
             )
         else:
-            answer = await self.model.structured(
-                account["run_id"],
-                ChatAnswer,
-                "Answer this question about the selected account using only its saved brief and sources. Attach exact quotes for factual assertions. Be explicit when the sources do not answer the question. This chat does not perform new web research; explain that Refresh research starts a new run when fresh evidence is needed.",
-                {
-                    "question": message,
-                    "brief": account["brief"],
-                    "sources": [source.model_dump() | {"text": source.text[:10000]} for source in sources],
-                },
-                max_tokens=1800,
-            )
-            if validate_links(answer.evidence, {source.id: source for source in sources}):
+            await self.model.prepare(self.store.get("run", account["run_id"])["settings"])
+            data = {
+                "question": message,
+                "brief": account["brief"],
+                "sources": [source.model_dump() | {"text": source.text[:10000]} for source in sources],
+            }
+            for attempt in range(2):
+                try:
+                    answer = await self.model.structured(
+                        account["run_id"],
+                        ChatAnswer,
+                        "Answer this question about the selected account using only its saved brief and sources. Attach exact quotes for factual assertions. Be explicit when the sources do not answer the question. This chat does not perform new web research; explain that Refresh research starts a new run when fresh evidence is needed.",
+                        data,
+                        role="research",
+                    )
+                    issues = validate_links(answer.evidence, {source.id: source for source in sources})
+                    if not issues:
+                        verification = await self.model.structured(
+                            account["run_id"],
+                            Verification,
+                            "Audit this contextual answer against the supplied source text. Every factual assertion must be supported, with citations attached. Hypotheses and uncertainty must remain explicit. Unsupported questions can be answered by acknowledging missing evidence. Reject invented facts, names, events or unsupported conclusions even if an exact quote exists elsewhere in the answer.",
+                            {
+                                "answer": answer.model_dump(),
+                                "sources": [source.model_dump(mode="json") for source in sources],
+                            },
+                            role="review",
+                        )
+                        issues = (
+                            []
+                            if verification.supported
+                            else (verification.issues or ["The answer is unsupported."])
+                        )
+                except StructuredOutputError as error:
+                    issues = [str(error)]
+                if not issues:
+                    break
+                data["corrections_required"] = issues
+            else:
                 raise ServiceError(
-                    "The answer did not pass citation validation. Try a more specific question."
-                )
-            verification = await self.model.structured(
-                account["run_id"],
-                Verification,
-                "Audit this contextual answer against the supplied source text. Every factual assertion must be supported, with citations attached. Hypotheses and uncertainty must remain explicit. Unsupported questions can be answered by acknowledging missing evidence. Reject invented facts, names, events or unsupported conclusions even if an exact quote exists elsewhere in the answer.",
-                {
-                    "answer": answer.model_dump(),
-                    "sources": [source.model_dump() | {"text": source.text[:10000]} for source in sources],
-                },
-                max_tokens=1200,
-            )
-            if not verification.supported:
-                raise ServiceError(
-                    "The answer could not be supported by the saved evidence. Try a more specific question or refresh research."
+                    "The answer could not be supported by the saved evidence after one repair. Try a more specific question or refresh research."
                 )
         record = {
             "id": uid(),
@@ -433,6 +482,7 @@ class Research:
             "at": now(),
             "question": message,
             **answer.model_dump(),
+            "review": None if account["is_demo"] else self.review_record(account["run_id"], verification),
         }
         self.store.put("chat", record["id"], record)
         return record

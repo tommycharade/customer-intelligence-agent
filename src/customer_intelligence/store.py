@@ -102,7 +102,7 @@ class Store:
             ).fetchall()
         return [source for row in rows if (source := self.get("source", row[0]))]
 
-    def reserve(self, run_id, service, amount, limit):
+    def reserve(self, run_id, service, amount, limit, metadata=None):
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             used = db.execute(
@@ -118,25 +118,74 @@ class Store:
                 "INSERT INTO charges VALUES(?,?,?,?,?,?,?)",
                 (charge_id, run_id, service, amount, None, "reserved", now()),
             )
+            if metadata is not None:
+                record = {
+                    **metadata,
+                    "id": charge_id,
+                    "run_id": run_id,
+                    "at": now(),
+                    "reserved_usd": amount,
+                    "actual_usd": None,
+                    "status": "reserved",
+                    "provider": None,
+                    "usage": {},
+                    "verdict": None,
+                }
+                db.execute(
+                    "INSERT INTO objects VALUES(?,?,?,?)",
+                    ("model_call", charge_id, json.dumps(record), record["at"]),
+                )
         return charge_id
 
-    def settle(self, charge_id, actual=None):
+    def settle(self, charge_id, actual=None, **metadata):
         with self.connect() as db:
             db.execute(
                 "UPDATE charges SET actual=?,status=? WHERE id=?",
                 (actual, "confirmed" if actual is not None else "estimated", charge_id),
             )
+            row = db.execute(
+                "SELECT data FROM objects WHERE kind='model_call' AND id=?", (charge_id,)
+            ).fetchone()
+            if row:
+                record = json.loads(row[0]) | {
+                    "actual_usd": actual,
+                    "status": "completed" if actual is not None else "estimated",
+                    **metadata,
+                }
+                db.execute(
+                    "UPDATE objects SET data=? WHERE kind='model_call' AND id=?",
+                    (json.dumps(record), charge_id),
+                )
 
     def costs(self, run_id):
-        result = {"model_usd": 0, "search_credits": 0, "has_estimates": False}
+        result = {
+            "model_usd": 0,
+            "search_credits": 0,
+            "has_estimates": False,
+            "by_role": {
+                role: {"model_usd": 0, "calls": 0, "has_estimates": False}
+                for role in ("extraction", "research", "review")
+            },
+        }
         with self.connect() as db:
             for row in db.execute(
-                "SELECT service,COALESCE(actual,reserved) amount,actual FROM charges WHERE run_id=?",
+                "SELECT c.service,COALESCE(c.actual,c.reserved) amount,c.actual,m.data metadata FROM charges c LEFT JOIN objects m ON m.kind='model_call' AND m.id=c.id WHERE c.run_id=?",
                 (run_id,),
             ):
                 result["model_usd" if row["service"] == "OpenRouter" else "search_credits"] += row["amount"]
                 result["has_estimates"] |= row["actual"] is None
+                if row["service"] == "OpenRouter":
+                    metadata = json.loads(row["metadata"]) if row["metadata"] else {}
+                    role = metadata.get("role", "legacy")
+                    group = result["by_role"].setdefault(
+                        role, {"model_usd": 0, "calls": 0, "has_estimates": False}
+                    )
+                    group["model_usd"] += row["amount"]
+                    group["calls"] += 1
+                    group["has_estimates"] |= row["actual"] is None
         result["model_usd"] = round(result["model_usd"], 6)
+        for group in result["by_role"].values():
+            group["model_usd"] = round(group["model_usd"], 6)
         return result
 
     def event(self, run_id, message, **extra):
