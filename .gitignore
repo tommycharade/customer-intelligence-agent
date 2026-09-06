@@ -19,3 +19,10 @@ artifacts/
 *.db*
 *.log
 *.tsbuildinfo
+dist/
+build/
+*.egg-info/
+*.token
+credentials.json
+*.pem
+*.key

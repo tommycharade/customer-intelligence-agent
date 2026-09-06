@@ -5,6 +5,7 @@ import uvicorn
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
+from ..credits import CRAWL4AI_ATTRIBUTION
 from .common import ServiceAuth, ToolError, token
 from .schemas import CrawlArgs, ExtractArgs, PageArgs, SearchArgs, ToolContext
 
@@ -106,7 +107,7 @@ def create_service(kind, backend=None, credential=None):
 
 
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(epilog=CRAWL4AI_ATTRIBUTION)
     parser.add_argument("service", choices=["gateway", "search", "crawl"])
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args()

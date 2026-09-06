@@ -4,11 +4,14 @@ import webbrowser
 
 import uvicorn
 
+from .credits import CRAWL4AI_ATTRIBUTION
 from .main import create_app
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Start Customer Intelligence on this Mac")
+    parser = argparse.ArgumentParser(
+        description="Start Customer Intelligence on this Mac", epilog=CRAWL4AI_ATTRIBUTION
+    )
     parser.add_argument("command", nargs="?", choices=["serve"], default="serve")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--no-browser", action="store_true")

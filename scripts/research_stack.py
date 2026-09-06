@@ -9,6 +9,7 @@ import webbrowser
 import httpx
 
 from customer_intelligence.config import data_directory
+from customer_intelligence.credits import CRAWL4AI_ATTRIBUTION
 
 
 def compose_read(service, path):
@@ -17,8 +18,19 @@ def compose_read(service, path):
     ).strip()
 
 
+def docker_url():
+    binding = subprocess.check_output(
+        ["docker", "compose", "port", "intelligence", "8765"], text=True
+    ).strip()
+    prefix = "127.0.0.1:"
+    port = binding.removeprefix(prefix)
+    if not binding.startswith(prefix) or not port.isdecimal() or not 1 <= int(port) <= 65535:
+        raise SystemExit("The Docker application must publish one port on 127.0.0.1. Check Compose settings.")
+    return f"http://127.0.0.1:{port}"
+
+
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(epilog=CRAWL4AI_ATTRIBUTION)
     parser.add_argument("action", choices=["connect-native", "open", "research"])
     parser.add_argument("--domain")
     parser.add_argument("--company-name")
@@ -32,7 +44,7 @@ def main():
             file.write(value)
         print("The Mac app is connected to the local research gateway. Use Settings → Check connections.")
         return
-    base = "http://127.0.0.1:" + os.environ.get("CIA_DOCKER_PORT", "8766")
+    base = docker_url()
     credential = compose_read("intelligence", "/data/launch.token")
     if args.action == "open":
         webbrowser.open(base + "/auth?token=" + credential)

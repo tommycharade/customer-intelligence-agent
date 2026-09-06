@@ -1,6 +1,6 @@
 # Research architecture
 
-The existing FastAPI/React application and LangGraph graph remain in `src/customer_intelligence` and `web`. The new `research_stack` package separates schemas, policy-aware clients, gateway, search and crawling. Docker infrastructure lives in `services`. A wholesale move into multiple Python projects would add packaging work without creating another useful boundary for this single-user release.
+The FastAPI application and LangGraph graph live in `src/customer_intelligence`; the React UI lives in `web`. The `research_stack` package separates schemas, policy-aware clients, gateway, search and crawling. Docker infrastructure lives in `services`. One Python package keeps development and deployment manageable for a single-user release.
 
 ```mermaid
 flowchart TD
@@ -32,11 +32,11 @@ Findings retain `observed_fact`, `supported_inference` or `hypothesis` with evid
 
 SQLite is sufficient for one local user. Application state/checkpoints and gateway evidence/cache/audit use separate persistent volumes. Redis and Postgres are unnecessary. Cache keys include policy settings, so permitted material is not reused across incompatible policies. Cached evidence keeps its original retrieval timestamp and request provenance, with the current call ID in the response envelope. Search TTL is 15 minutes, page/extraction TTL six hours, capped at one day; expiry never deletes evidence already retained for a recommendation.
 
-## Assumptions and conflicts resolved
+## Design decisions
 
-- Preserve the approved three-model setup, mandatory review and existing account brief/UI instead of replacing them with the attachment's illustrative two-model configuration or alternative brief shape.
-- Keep the original Mac UI at port 8765. The optional full Docker application uses 8766 with a separate database. Both can use the gateway on 8767.
+- Use three independently configurable roles for extraction, research and mandatory evidence review. See the README for defaults and provider requirements.
+- The native Mac UI uses port 8765. The full Docker application uses 8766 with a separate database. Both can use the gateway on 8767.
 - Keep macOS Keychain for native operation. The Docker UI supports a private, mode-0600 credential file or an environment-supplied OpenRouter key; containers cannot use the Mac login Keychain.
-- Limits default to 60 searches and 80 pages across a shortlist run, up to three search rounds and five model calls per account. The brief's 15-query/30-page example can be selected in Settings.
+- Limits default to 60 search attempts and 80 page attempts across a shortlist run, up to three search rounds and five model calls per account. Limits are editable in Settings; resumes retain the run's usage.
 - Static scoped credentials are generated locally into separate volumes. They are not internet-facing OAuth credentials; rotation and limitations are in operations.md.
 - No Ultra13 testing or certification is claimed. The deterministic fixtures provide a starting point for a separately authorised review.
