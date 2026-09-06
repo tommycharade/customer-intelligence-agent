@@ -1,6 +1,6 @@
 # Running the research stack
 
-Requirements: Docker Desktop with Compose, at least 4 GB available Docker memory, and outbound access to image/package registries and public search engines. The native application additionally needs Python/uv; rebuilding its UI needs Node 22+. Initial image/browser downloads take several minutes.
+Requirements: Docker Desktop with Compose, at least 4 GB available Docker memory, and outbound access to image/package registries and public search engines. Allow at least 15 GB of free Mac disk space for initial image builds and temporary layers; repeated rebuilds may need more until obsolete build cache is removed. The native application additionally needs Python/uv; rebuilding its UI needs Node 22+. Initial image/browser downloads take several minutes.
 
 From a fresh clone:
 
@@ -48,6 +48,8 @@ Compose publishes only the gateway and application on 127.0.0.1. Search, crawler
 SearXNG is pinned by image digest, Crawl4AI/MCP by `uv.lock`. Update these deliberately, then rerun the fixture and browser checks. The SearXNG settings template is applied only when its configuration volume is created; updating an existing engine configuration requires replacing that volume's settings file while preserving its generated secret. General discovery enables DuckDuckGo, Bing and Brave; news uses Google News. Search availability depends on the upstream engines and their public access rules.
 
 ## Degraded operation and recovery
+
+If a build fails with disk-full or I/O errors, check free space on the Mac as well as Docker's disk allocation. Remove only build cache you have identified as disposable, then restart Docker Desktop if its engine stopped responding. Do not reset Docker or delete volumes to recover build space: volumes contain application data, evidence and credentials.
 
 An unavailable engine may produce partial results. If every engine fails, search returns an explicit degraded error. Check service health and retry later; the app does not silently buy search results. You can also supply known company URLs or import evidence. A crawler outage or blocked page preserves already fetched sources and records an incomplete step. A site requiring authentication or human verification is not bypassed.
 

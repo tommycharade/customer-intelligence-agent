@@ -1,7 +1,7 @@
 FROM python:3.12.12-slim-bookworm AS base
 COPY --from=ghcr.io/astral-sh/uv:0.10.5 /uv /usr/local/bin/uv
 WORKDIR /app
-ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy PYTHONUNBUFFERED=1
+ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_NO_CACHE=1 PYTHONUNBUFFERED=1
 COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --frozen --no-dev --no-install-project
 ENV PATH="/app/.venv/bin:$PATH"
@@ -14,7 +14,7 @@ USER researcher
 CMD ["python", "-m", "customer_intelligence.research_stack.server", "gateway"]
 
 FROM base AS crawler-dependencies
-RUN uv sync --frozen --no-dev --no-install-project --extra crawl && PLAYWRIGHT_BROWSERS_PATH=/opt/browsers uv run --no-project playwright install --with-deps chromium
+RUN uv sync --frozen --no-dev --no-install-project --extra crawl && PLAYWRIGHT_BROWSERS_PATH=/opt/browsers uv run --no-project playwright install --with-deps chromium && rm -rf /var/lib/apt/lists/*
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/browsers
 
 FROM crawler-dependencies AS crawler
