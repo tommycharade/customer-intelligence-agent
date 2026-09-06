@@ -128,6 +128,10 @@ The local API is documented at `/docs` within an authenticated session. It suppo
 
 Paid-provider escalation is disabled. Exa/Parallel can be added behind the provider protocol later; neither is required in v0.1. No Tavily integration is used. Search engines can rate-limit or fail, and unsupported pages remain unavailable. The app reports these gaps rather than bypassing access restrictions or silently purchasing results.
 
+## License
+
+This project's original code is available under the [MIT License](LICENSE). Copyright (c) 2026 Tom Mooney. Third-party dependencies retain their own licenses and notices.
+
 ## Third-party credits
 
 This product includes software developed by UncleCode (https://x.com/unclecode) as part of the Crawl4AI project (https://github.com/unclecode/crawl4ai).

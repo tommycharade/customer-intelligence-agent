@@ -45,3 +45,7 @@ For code or configuration intended for publication, also run `gitleaks git . --l
 - Use deterministic synthetic fixtures for regressions. Paid API calls must remain outside automated tests.
 
 The repository is the source distribution. Publishing packages, prebuilt images or a hosted service is a separate release step with its own packaging, notices and deployment requirements.
+
+## License
+
+Contributions to this project's original code are provided under its [MIT License](LICENSE). Only submit work you have the right to contribute, and preserve applicable third-party notices.

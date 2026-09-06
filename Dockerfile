@@ -2,7 +2,7 @@ FROM python:3.12.12-slim-bookworm AS base
 COPY --from=ghcr.io/astral-sh/uv:0.10.5 /uv /usr/local/bin/uv
 WORKDIR /app
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_NO_CACHE=1 PYTHONUNBUFFERED=1
-COPY pyproject.toml uv.lock README.md ./
+COPY pyproject.toml uv.lock README.md LICENSE THIRD_PARTY_NOTICES.md ./
 RUN uv sync --frozen --no-dev --no-install-project
 ENV PATH="/app/.venv/bin:$PATH"
 RUN useradd --uid 10001 --create-home researcher && mkdir /data && chown researcher /data

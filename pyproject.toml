@@ -3,6 +3,9 @@ name = "customer-intelligence-agent"
 version = "0.1.0"
 description = "Evidence-led account research on your Mac"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
+authors = [{name = "Tom Mooney"}]
 requires-python = ">=3.12,<3.14"
 dependencies = [
   "fastapi>=0.115,<1",
@@ -28,13 +31,17 @@ dev = ["pytest>=8,<10", "pytest-asyncio>=0.25,<2", "ruff>=0.11,<1"]
 [project.scripts]
 customer-intelligence = "customer_intelligence.cli:main"
 
+[project.urls]
+Repository = "https://github.com/tommycharade/customer-intelligence-agent"
+Issues = "https://github.com/tommycharade/customer-intelligence-agent/issues"
+
 [project.optional-dependencies]
 crawl = [
     "crawl4ai>=0.9,<0.10",
 ]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.26"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
