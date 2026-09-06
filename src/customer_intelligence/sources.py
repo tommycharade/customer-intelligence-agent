@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import ipaddress
 import json
+import re
 import socket
 from io import BytesIO
 from urllib import robotparser
@@ -38,6 +39,11 @@ class PublicReader:
         if port not in {80, 443}:
             raise SourceUnavailable("Source uses a nonstandard port.")
         host = host.lower().rstrip(".")
+        if re.fullmatch(r"(?:0[xX][0-9a-fA-F]+|[0-9]+)(?:\.(?:0[xX][0-9a-fA-F]+|[0-9]+)){0,3}", host):
+            try:
+                ipaddress.ip_address(host)
+            except ValueError as error:
+                raise SourceUnavailable("Noncanonical numeric IP addresses are blocked.") from error
         if any(host == domain or host.endswith("." + domain) for domain in self.settings.blocked_domains):
             raise SourceUnavailable("This domain is blocked in source preferences.")
         if self.settings.allowed_domains and not any(

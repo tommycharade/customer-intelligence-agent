@@ -1,6 +1,8 @@
 import asyncio
 import json
+import logging
 import math
+import time
 from decimal import Decimal
 
 import httpx
@@ -64,7 +66,10 @@ class OpenRouter:
         await self.catalogue.refresh(force=True)
         self.catalogue.validate(settings)
 
-    async def structured(self, run_id, schema, instructions, data, *, role: ModelRole):
+    async def structured(
+        self, run_id, schema, instructions, data, *, role: ModelRole, node=None, account_domain=None
+    ):
+        started = time.monotonic()
         key = self.secrets.get("openrouter")
         if not key:
             raise ServiceError("Add your OpenRouter API key in Settings.")
@@ -82,7 +87,12 @@ class OpenRouter:
                 + "\nReturn JSON matching this schema:\n"
                 + json.dumps(json_schema),
             },
-            {"role": "user", "content": json.dumps(data, default=str)},
+            {
+                "role": "user",
+                "content": "<untrusted-research-data>\n"
+                + json.dumps(data, default=str)
+                + "\n</untrusted-research-data>",
+            },
         ]
         response_format = {
             "type": "json_schema",
@@ -100,6 +110,9 @@ class OpenRouter:
             settings.model_budget,
             metadata={
                 "role": role,
+                "node": node or schema.__name__,
+                "account_domain": account_domain,
+                "request_id": run_id,
                 "model": config.model,
                 "reasoning_effort": config.reasoning_effort,
                 "purpose": schema.__name__,
@@ -111,6 +124,7 @@ class OpenRouter:
                 "response_format": response_format["type"],
             },
         )
+        self.store.patch("model_call", charge, request_id=charge)
         self.store.event(
             run_id,
             f"{role.title()}: {config.model} ({config.reasoning_effort or 'model default'} reasoning)",
@@ -141,7 +155,11 @@ class OpenRouter:
                 response = await client.post(
                     "https://openrouter.ai/api/v1/chat/completions",
                     json=body,
-                    headers={"Authorization": f"Bearer {key}"},
+                    headers={
+                        "Authorization": f"Bearer {key}",
+                        "X-Request-ID": charge,
+                        "X-Graph-Run-ID": run_id,
+                    },
                 )
             if response.status_code >= 400:
                 known_unbilled = response.status_code in {400, 401, 402, 403, 404, 422, 429}
@@ -161,6 +179,7 @@ class OpenRouter:
                     provider=payload.get("provider"),
                     actual_model=payload.get("model"),
                     generation_id=payload.get("id"),
+                    duration_ms=round((time.monotonic() - started) * 1000),
                 )
                 choice = payload["choices"][0]
                 if choice.get("finish_reason") == "length":
@@ -176,6 +195,21 @@ class OpenRouter:
             except StructuredOutputError:
                 self.store.patch("model_call", charge, status="invalid_output")
                 raise
+            logging.getLogger("research.audit").info(
+                json.dumps(
+                    {
+                        "type": "model_call",
+                        "request_id": charge,
+                        "graph_run_id": run_id,
+                        "role": role,
+                        "model": config.model,
+                        "node": node or schema.__name__,
+                        "status": "completed",
+                        "duration_ms": round((time.monotonic() - started) * 1000),
+                        "usage": usage,
+                    }
+                )
+            )
             result._call_id = charge
             if schema.__name__ == "Verification":
                 self.store.patch("model_call", charge, verdict=result.model_dump())
@@ -187,46 +221,4 @@ class OpenRouter:
             self.store.settle(charge, status="failed")
             raise ServiceError(
                 f"The {role} model could not finish. Its reserved cost is retained because billing is uncertain. Resume when the connection is available."
-            ) from error
-
-
-class Tavily:
-    def __init__(self, store, secrets):
-        self.store, self.secrets = store, secrets
-
-    async def search(self, run_id, query):
-        key = self.secrets.get("tavily")
-        if not key:
-            raise ServiceError("Add your Tavily API key in Settings.")
-        run = self.store.get("run", run_id)
-        settings = run["settings"]
-        charge = self.store.reserve(run_id, "Tavily", 1, settings["search_budget"])
-        body = {
-            "query": query[:1200],
-            "search_depth": "basic",
-            "auto_parameters": False,
-            "include_answer": False,
-            "include_raw_content": False,
-            "max_results": 5,
-            "include_domains": settings["allowed_domains"],
-            "exclude_domains": settings["blocked_domains"],
-        }
-        try:
-            async with httpx.AsyncClient(timeout=35, trust_env=False) as client:
-                response = await client.post(
-                    "https://api.tavily.com/search", json=body, headers={"Authorization": f"Bearer {key}"}
-                )
-            if response.status_code >= 400:
-                raise ServiceError(
-                    f"Tavily returned HTTP {response.status_code}. Check your key and search credits, then resume."
-                )
-            self.store.settle(charge, 1)
-            return [
-                {"title": hit["title"], "url": hit["url"], "content": hit.get("content", "")[:2500]}
-                for hit in response.json().get("results", [])
-            ]
-        except httpx.HTTPError as error:
-            self.store.settle(charge)
-            raise ServiceError(
-                "Search is temporarily unavailable. Your research progress has been saved."
             ) from error

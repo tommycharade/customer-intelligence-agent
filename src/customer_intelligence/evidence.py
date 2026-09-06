@@ -53,8 +53,8 @@ def validate_assessment(
             issues.append("The timing signal is stale or future-dated; use no timing signal found.")
     for claim in claims:
         issues += validate_links(claim.evidence, source_map)
-        if claim.kind == "hypothesis" and not claim.reasoning:
-            issues.append("A hypothesis needs its reasoning and uncertainty explained.")
+        if claim.kind in {"hypothesis", "inference"} and not claim.reasoning:
+            issues.append("An inference or hypothesis needs its reasoning and uncertainty explained.")
     if {person.role for person in assessment.who_matters} != {"user", "champion", "budget_holder"} or len(
         assessment.who_matters
     ) != 3:

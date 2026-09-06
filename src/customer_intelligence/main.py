@@ -5,6 +5,7 @@ import hmac
 import html
 import io
 import json
+import os
 import secrets as random_secrets
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
@@ -36,11 +37,14 @@ class Credential(BaseModel):
 
 class NewRun(BaseModel):
     target_domain: str | None = None
+    company_name: str | None = Field(default=None, max_length=200)
 
 
 class RunBudget(BaseModel):
     model_budget: float = Field(ge=0.1, le=100)
-    search_budget: int = Field(ge=1, le=1000)
+    max_search_queries: int = Field(default=60, ge=1, le=100)
+    max_pages_fetched: int = Field(default=80, ge=1, le=120)
+    max_llm_iterations: int = Field(default=5, ge=5, le=12)
 
 
 def create_app(directory=None, auth_token=None, secret_store=None):
@@ -139,7 +143,13 @@ def create_app(directory=None, auth_token=None, secret_store=None):
             "profile": store.get("config", "profile"),
             "settings": settings().model_dump(),
             "model_defaults": TaskModels().model_dump(),
-            "credentials": credentials.status(),
+            "credentials": {
+                name: status for name, status in credentials.status().items() if name in Secrets.NAMES
+            },
+            "credential_storage": "private Docker volume"
+            if os.environ.get("CIA_SECRET_BACKEND") == "file"
+            else "macOS Keychain",
+            "research_stack": {"provider": "SearXNG + Crawl4AI", "paid_escalation": "disabled"},
             "data_directory": str(store.directory),
         }
 
@@ -180,13 +190,12 @@ def create_app(directory=None, auth_token=None, secret_store=None):
 
     @app.post("/api/check-connections")
     async def check_connections():
-        result = {"openrouter": "missing", "tavily": "missing"}
+        result = {"openrouter": "missing"}
         import httpx
 
         async with httpx.AsyncClient(timeout=20, trust_env=False) as client:
             for name, url in [
                 ("openrouter", "https://openrouter.ai/api/v1/key"),
-                ("tavily", "https://api.tavily.com/usage"),
             ]:
                 if key := credentials.get(name):
                     try:
@@ -198,7 +207,22 @@ def create_app(directory=None, auth_token=None, secret_store=None):
                         )
                     except httpx.HTTPError:
                         result[name] = "unavailable — check network and TLS certificates"
+        health = await app.state.research.search.health()
+        result["research"] = (
+            "connected"
+            if health.get("ready")
+            else health.get("message", "Research services unavailable; check Docker health.")
+        )
         return result
+
+    @app.get("/api/research/health")
+    async def research_health():
+        return await app.state.research.search.health()
+
+    @app.get("/api/runs/{id}/research-tools")
+    async def research_tools(id: str):
+        require("run", id)
+        return [call for call in reversed(store.all("tool_call")) if call["run_id"] == id]
 
     @app.post("/api/imports/preview")
     async def preview_import(file: UploadFile = File(...)):
@@ -275,7 +299,7 @@ def create_app(directory=None, auth_token=None, secret_store=None):
         if not profile:
             raise HTTPException(422, "Complete your customer profile before starting research.")
         if not all(credentials.get(name) for name in Secrets.NAMES):
-            raise HTTPException(422, "Add your OpenRouter and Tavily keys in Settings.")
+            raise HTTPException(422, "Add your OpenRouter key in Settings.")
         domain = canonical_domain(body.target_domain) if body.target_domain else None
         run = {
             "id": uid(),
@@ -291,6 +315,7 @@ def create_app(directory=None, auth_token=None, secret_store=None):
             "account_ids": [],
             "error": None,
             "target_domain": domain,
+            "target_name": body.company_name,
             "input_review": {"observations": [], "hypotheses": []},
         }
         store.put("run", run["id"], run)
@@ -366,7 +391,9 @@ def create_app(directory=None, auth_token=None, secret_store=None):
         run = require("run", id)
         if app.state.research.active() or run["is_demo"]:
             raise HTTPException(409, "Stop active work before changing a live run's budget.")
-        return store.patch("run", id, settings=run["settings"] | budget.model_dump())
+        return store.patch(
+            "run", id, settings=Settings.model_validate(run["settings"]).model_dump() | budget.model_dump()
+        )
 
     @app.get("/api/accounts")
     async def accounts(demo: bool = False, run_id: str | None = None):
@@ -450,6 +477,27 @@ def create_app(directory=None, auth_token=None, secret_store=None):
             key=lambda cohort: cohort["week"],
             reverse=True,
         )
+
+    @app.get("/api/observability")
+    async def observability():
+        calls = store.all("model_call")
+        runs = [run for run in store.all("run") if not run["is_demo"]]
+        tools = store.all("tool_call")
+        return {
+            "llm_calls_total": len(calls),
+            "llm_tokens_total": sum(
+                call.get("usage", {}).get("prompt_tokens", 0)
+                + call.get("usage", {}).get("completion_tokens", 0)
+                for call in calls
+            ),
+            "research_runs_total": len(runs),
+            "research_run_failures_total": sum(run["status"] in {"interrupted", "paused"} for run in runs),
+            "research_run_duration_seconds": {run["id"]: run.get("duration_seconds", 0) for run in runs},
+            "search_requests_total": sum(call["tool"].startswith("search_") for call in tools),
+            "crawl_requests_total": sum(
+                call["tool"] in {"fetch_page", "crawl_site", "extract_structured"} for call in tools
+            ),
+        }
 
     @app.post("/api/demo")
     async def demo():

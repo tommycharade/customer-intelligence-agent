@@ -61,6 +61,7 @@ class Source(Model):
     retrieved_at: str = Field(default_factory=now)
     content_hash: str = ""
     is_demo: bool = False
+    provenance: dict = Field(default_factory=dict)
 
 
 class Evidence(Model):
@@ -70,7 +71,7 @@ class Evidence(Model):
 
 class Claim(Model):
     text: str = Field(min_length=3, max_length=1800)
-    kind: Literal["fact", "hypothesis"]
+    kind: Literal["fact", "inference", "hypothesis"]
     evidence: list[Evidence] = Field(min_length=1, max_length=5)
     reasoning: str | None = None
     event_date: date | None = None
@@ -163,7 +164,10 @@ class TaskModels(Model):
 class Settings(Model):
     models: TaskModels = Field(default_factory=TaskModels)
     model_budget: float = Field(default=5, ge=0.10, le=100)
-    search_budget: int = Field(default=100, ge=1, le=1000)
+    max_search_queries: int = Field(default=60, ge=1, le=100)
+    max_pages_fetched: int = Field(default=80, ge=1, le=120)
+    max_search_iterations: int = Field(default=3, ge=1, le=3)
+    max_llm_iterations: int = Field(default=5, ge=5, le=12)
     candidate_limit: int = Field(default=40, ge=1, le=40)
     allowed_domains: list[str] = Field(default_factory=list)
     blocked_domains: list[str] = Field(default_factory=list)
@@ -172,8 +176,12 @@ class Settings(Model):
     @model_validator(mode="before")
     @classmethod
     def legacy_model(cls, value):
-        if isinstance(value, dict) and "model" in value:
+        if isinstance(value, dict):
             value = dict(value)
+            legacy_budget = value.pop("search_budget", None)
+            if legacy_budget is not None:
+                value.setdefault("max_search_queries", min(100, max(1, legacy_budget)))
+        if isinstance(value, dict) and "model" in value:
             legacy = value.pop("model")
             if "models" in value:
                 raise ValueError("Supply task models or a legacy model, not both")
@@ -202,3 +210,10 @@ class ChatRequest(Model):
 class ChatAnswer(Model):
     answer: str
     evidence: list[Evidence]
+
+
+class ResearchGaps(Model):
+    sufficient: bool
+    gaps: list[Literal["company_type", "technology", "workflow", "timing"]] = Field(max_length=4)
+    confidence: float = Field(ge=0, le=1)
+    explanation: str = Field(max_length=1000)

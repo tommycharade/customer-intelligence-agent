@@ -19,10 +19,7 @@ class FakeSecrets:
         self.values[name] = value
 
     def status(self):
-        return {
-            name: {"configured": bool(self.get(name)), "environment": False}
-            for name in ["openrouter", "tavily"]
-        }
+        return {name: {"configured": bool(self.get(name)), "environment": False} for name in ["openrouter"]}
 
 
 @pytest.fixture

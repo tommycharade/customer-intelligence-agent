@@ -1,0 +1,24 @@
+use_default_settings:
+  engines:
+    keep_only:
+      - duckduckgo
+      - bing
+      - brave
+      - google news
+server:
+  secret_key: "GENERATE_AT_STARTUP"
+  limiter: false
+  image_proxy: false
+  public_instance: false
+search:
+  safe_search: 1
+  default_lang: en
+  formats:
+    - json
+outgoing:
+  request_timeout: 8
+  max_request_timeout: 15
+  pool_connections: 10
+  pool_maxsize: 20
+ui:
+  static_use_hash: true

@@ -161,6 +161,8 @@ class Store:
         result = {
             "model_usd": 0,
             "search_credits": 0,
+            "search_queries": 0,
+            "pages_fetched": 0,
             "has_estimates": False,
             "by_role": {
                 role: {"model_usd": 0, "calls": 0, "has_estimates": False}
@@ -183,6 +185,12 @@ class Store:
                     group["model_usd"] += row["amount"]
                     group["calls"] += 1
                     group["has_estimates"] |= row["actual"] is None
+        for call in self.all("tool_call"):
+            if call["run_id"] == run_id:
+                if call["tool"] in {"search_web", "search_news"}:
+                    result["search_queries"] += 1
+                elif call["tool"] in {"fetch_page", "extract_structured"}:
+                    result["pages_fetched"] += 1
         result["model_usd"] = round(result["model_usd"], 6)
         for group in result["by_role"].values():
             group["model_usd"] = round(group["model_usd"], 6)

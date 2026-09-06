@@ -1,0 +1,12 @@
+.git
+.venv
+.env*
+.local
+.impeccable
+artifacts
+**/__pycache__
+**/node_modules
+web/dist
+**/*.sqlite*
+**/*.db*
+**/*.log

@@ -14,7 +14,7 @@ export type CatalogueModel = {
 }
 export type ModelCatalogue = {models: CatalogueModel[]; fetched_at: string}
 export type Settings = {
-  models: TaskModels; model_budget: number; search_budget: number; candidate_limit: number;
+  models: TaskModels; model_budget: number; max_search_queries: number; max_pages_fetched: number; max_search_iterations: number; max_llm_iterations: number; candidate_limit: number;
   allowed_domains: string[]; blocked_domains: string[]; browser_fallback: boolean;
 }
 export type SourceType = 'website' | 'documentation' | 'job' | 'discussion' | 'inbound' | 'interview' | 'asset' | 'exclusion' | 'other'
@@ -24,7 +24,7 @@ export type Source = {
   retrieved_at: string; content_hash: string; is_demo: boolean; characters?: number;
 }
 export type Evidence = {source_id: string; quote: string}
-export type Claim = {text: string; kind: 'fact' | 'hypothesis'; evidence: Evidence[]; reasoning: string | null; event_date: string | null}
+export type Claim = {text: string; kind: 'fact' | 'inference' | 'hypothesis'; evidence: Evidence[]; reasoning: string | null; event_date: string | null}
 export type Stakeholder = {role: 'user' | 'champion' | 'budget_holder'; title: string; name: string | null; confidence: string; basis: Claim}
 export type Brief = {
   company_name: string; domain: string; summary: string; fit: string;
@@ -39,7 +39,7 @@ export type Account = {
   outcome: {status: OutcomeStatus; note: string; relevant_conversation_at?: string | null};
 }
 export type RoleCosts = {model_usd: number; calls: number; has_estimates: boolean}
-export type Costs = {model_usd: number; search_credits: number; has_estimates: boolean; by_role?: Record<string, RoleCosts>}
+export type Costs = {model_usd: number; search_credits: number; search_queries: number; pages_fetched: number; has_estimates: boolean; by_role?: Record<string, RoleCosts>}
 export type ModelCall = {
   id: string; run_id: string; at: string; role: ModelRole; model: string; reasoning_effort: ReasoningEffort | null;
   purpose: string; status: string; provider: string | null; actual_model?: string | null;
@@ -48,12 +48,12 @@ export type ModelCall = {
 }
 export type Run = {
   id: string; created_at: string; completed_at: string | null; is_demo: boolean; status: string;
-  stage: string; profile: Profile; settings: Settings; candidate_count: number; processed: number;
+  stage: string; degraded?: boolean; profile: Profile; settings: Settings; candidate_count: number; processed: number;
   account_ids: string[]; error: string | null; costs: Costs;
   input_review: {observations: string[]; hypotheses: string[]};
 }
 export type Bootstrap = {
-  profile: Profile | null; settings: Settings; model_defaults: TaskModels; data_directory: string;
+  profile: Profile | null; settings: Settings; model_defaults: TaskModels; data_directory: string; credential_storage: string; research_stack: {provider: string; paid_escalation: string};
   credentials: Record<string, {configured: boolean; environment: boolean}>;
 }
 export type Chat = {id: string; account_id: string; at: string; question: string; answer: string; evidence: Evidence[]}

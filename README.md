@@ -4,16 +4,29 @@ A local account-research workspace. Find up to ten accounts worth your attention
 
 ## Start on your Mac
 
-Prerequisites: Python 3.12–3.13 via [uv](https://docs.astral.sh/uv/), Node.js 22+ and npm. Git is required for development.
+Prerequisites: Docker Desktop with Compose. For the native Mac UI, also install Python 3.12–3.13 via [uv](https://docs.astral.sh/uv/), Node.js 22+ and npm. Git is required for development.
+
+The complete Docker application:
+
+```bash
+docker compose up -d
+make open
+```
+
+Or keep the native Mac UI and its existing data:
 
 ```bash
 ./scripts/setup.sh
+make up
+make connect-native
 ./scripts/start.sh
 ```
 
+The native UI uses port 8765, the separate Docker UI uses 8766, and both use the authenticated gateway on 8767. The Docker UI has a separate database. First startup downloads the search service, dependencies and browser. [Operations and troubleshooting](docs/operations.md) explains the commands and storage.
+
 Alternatively, double-click **Start Customer Intelligence.command** after setup. The launcher opens an authenticated local browser session at `http://127.0.0.1:8765`. Keep its terminal running; Ctrl+C stops the service. A sleeping Mac pauses work. Restart and choose **Resume** for interrupted runs.
 
-First, use **Explore a demo** to try the workspace without API keys or charges. The three synthetic companies are labelled throughout and excluded from live outcome metrics. Then enter your offering, six customer-profile fields, OpenRouter key and Tavily key. Keys are stored in macOS Keychain; environment overrides `OPENROUTER_API_KEY` and `TAVILY_API_KEY` are also supported. Never put keys in a `VITE_` environment variable or Git.
+First, use **Explore a demo** to try the workspace without API keys or charges. The three synthetic companies are labelled throughout and excluded from live outcome metrics. Then enter your offering, six customer-profile fields, OpenRouter key. No paid search API key is needed. The native app stores its key in macOS Keychain; the Docker app uses a private volume. `OPENROUTER_API_KEY` is an optional environment override. Never put keys in a `VITE_` environment variable or Git.
 
 ## Data and access
 
@@ -21,8 +34,9 @@ First, use **Explore a demo** to try the workspace without API keys or charges. 
 | --- | --- | --- |
 | LangGraph | Research workflow and resumable checkpoints | Local application database |
 | OpenRouter | Candidate extraction, briefs, independent evidence review and chat | Your API key, funded account and selected source excerpts |
-| Tavily | Public company discovery and source search | Your API key and public profile-based queries |
-| HTTPX and Trafilatura | Read and extract public websites, documentation, jobs and discussions | Outbound HTTPS to permitted public sources |
+| SearXNG | Self-hosted discovery and news search | Public profile-based queries; outbound access to configured search engines |
+| Research MCP gateway | Authenticated search/crawl tools, quotas, cache, provenance and audits | Automatically generated, scoped local service credentials |
+| Crawl4AI with guarded HTTPX transport | Read, browse, crawl and extract permitted public content | Docker; outbound HTTP(S) through the public-address policy |
 | Playwright Chromium | Render public pages that need JavaScript | An isolated browser; no personal browser profile or saved logins |
 | pypdf, python-docx and standard text/email/CSV parsers | Preview enquiries, interview notes and useful assets | Only files you select or text you paste |
 | SQLite and FTS5 | Store records, evidence, costs and searchable inputs | Read/write in the application data directory |
@@ -33,15 +47,15 @@ First, use **Explore a demo** to try the workspace without API keys or charges. 
 
 Private data lives in `~/Library/Application Support/Customer Intelligence Agent` (override with `CIA_DATA_DIR`). SQLite stores extracted input text, citations, briefs, run snapshots, chat and outcomes. A separate SQLite file stores LangGraph checkpoints. Files selected for import are parsed locally; the editable extraction is saved only after you choose **Save inputs**. Original file binaries are not retained.
 
-The app is local, but selected excerpts are sent to OpenRouter for inference. Every task requires zero-data-retention provider routing. Research and review require provider-enforced JSON schemas; extraction can use JSON output with local schema validation. Tavily receives public discovery queries; confidential input text is never used to construct search queries. The application does not send email or access your mailbox, CRM, personal browser sessions or shell through the model.
+The app is local, but selected excerpts are sent to OpenRouter for inference. Every task requires zero-data-retention provider routing. Research and review require provider-enforced JSON schemas; extraction can use JSON output with local schema validation. SearXNG forwards public discovery queries to its configured engines; confidential input text is never used to construct search queries. The application does not send email or access your mailbox, CRM, personal browser sessions or shell through the model.
 
 Public retrieval respects crawler directives, blocks private/reserved addresses, validates redirects, pins connections to validated public IPs and bounds response sizes. JavaScript fallback uses isolated Chromium with the same retrieval boundary. Pages requiring authentication or human verification are reported as unavailable. Allow/block domain preferences apply to retrieval and discovery.
 
 ## Research and spending
 
-The graph reviews imported notes, discovers candidates, retrieves source pages, assesses fit, checks exact citations, performs a separate semantic verification, and saves qualified accounts. Exclusions win over ranking. All three fit criteria need evidence. Stakeholders and proposed assets retain their uncertainty. A timing signal needs an evidenced recent event date; missing timing is explicitly shown.
+The graph reviews imported notes, discovers candidates, retrieves source pages, assesses fit, checks exact citations, checks gaps with bounded targeted research, performs a separate semantic verification, and saves qualified accounts. Exclusions win over ranking. All three fit criteria need evidence. Stakeholders and proposed assets retain their uncertainty. A timing signal needs an evidenced recent event date; missing timing is explicitly shown.
 
-Defaults: one on-demand run at a time, ten recommendations maximum, 40 candidates, $5 OpenRouter cap and 100 Tavily search credits. Model calls reserve a conservative maximum using current published pricing and output bounds, then reconcile reported cost. Retries and contextual chat share the run's ledger. Requests with uncertain billing retain their reservation; the UI labels estimates. Search has a separate credit ledger. No paid requests happen in demo mode or automated tests.
+Defaults: one on-demand run at a time, ten recommendations maximum, 40 candidates, $5 OpenRouter cap, 60 searches and 80 page attempts per run, up to three search rounds and five model calls per account. Model calls reserve a conservative maximum using current published pricing and output bounds, then reconcile reported cost. Retries and contextual chat share the run's ledger. Requests with uncertain billing retain their reservation; the UI labels estimates. Self-hosted search uses a query/page quota rather than a paid credit ledger. Historical search charges remain in older exports. No paid requests happen in demo mode or automated tests.
 
 ### Models by task
 
@@ -74,8 +88,9 @@ Markdown/CSV exports include source references, model configuration, the account
 ## Development
 
 ```bash
-uv sync --locked
-uv run pytest
+uv sync --locked --extra crawl
+uv run playwright install --with-deps chromium
+uv run --extra crawl pytest
 uv run ruff check .
 npm --prefix web ci
 npm --prefix web run check
@@ -86,3 +101,12 @@ uv run python scripts/browser_check.py
 The Python server serves the production Vite build. GitHub Actions uses synthetic fixtures and mocked providers; research API keys are not required. Dependencies are locked in `uv.lock` and `web/package-lock.json`. Private data, credentials, build artifacts and browser screenshots are excluded from Git.
 
 The local API is documented at `/docs` within an authenticated session. It supports profile/settings, import preview/save/search, research runs and SSE progress, account briefs, contextual chat, outcome recording, demo data, export and deletion. This is a single-user, loopback-only application; deployment to a LAN or public host requires a separate authentication and deployment design.
+
+## Self-hosted research documentation
+
+- [Architecture and assumptions](docs/architecture.md): gateway/MCP separation, evidence, bounded graph and optional paid-provider interface.
+- [Operations](docs/operations.md): startup, `make research DOMAIN=example.com`, caching, recovery, keys and troubleshooting.
+- [Research API](docs/api.md): approved tool schemas, typed errors and provenance.
+- [Threat model](docs/threat-model.md): controls, tests and residual risks.
+
+Paid-provider escalation is disabled. Exa/Parallel can be added behind the provider protocol later; neither is required in v0.1. No Tavily integration is used. Search engines can rate-limit or fail, and unsupported pages remain unavailable. The app reports these gaps rather than bypassing access restrictions or silently purchasing results.

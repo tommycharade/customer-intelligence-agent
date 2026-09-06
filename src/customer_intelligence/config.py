@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 
@@ -11,11 +12,14 @@ def data_directory():
 
 
 class Secrets:
-    NAMES = {"openrouter": "OPENROUTER_API_KEY", "tavily": "TAVILY_API_KEY"}
+    NAMES = {"openrouter": "OPENROUTER_API_KEY"}
 
     def get(self, name):
         if value := os.environ.get(self.NAMES[name]):
             return value
+        if os.environ.get("CIA_SECRET_BACKEND") == "file":
+            path = data_directory() / "credentials.json"
+            return json.loads(path.read_text()).get(name) if path.exists() else None
         try:
             return keyring.get_password(SERVICE, name)
         except keyring.errors.KeyringError:
@@ -24,6 +28,19 @@ class Secrets:
     def set(self, name, value):
         if name not in self.NAMES:
             raise ValueError("Unknown credential")
+        if os.environ.get("CIA_SECRET_BACKEND") == "file":
+            path = data_directory() / "credentials.json"
+            values = json.loads(path.read_text()) if path.exists() else {}
+            if value:
+                values[name] = value
+            else:
+                values.pop(name, None)
+            temporary = path.with_suffix(".tmp")
+            descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(descriptor, "w") as output:
+                json.dump(values, output)
+            temporary.replace(path)
+            return
         if value:
             keyring.set_password(SERVICE, name, value)
         else:

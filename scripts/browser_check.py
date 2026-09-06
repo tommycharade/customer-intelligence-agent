@@ -26,10 +26,7 @@ class MemorySecrets:
         self.values[name] = value
 
     def status(self):
-        return {
-            name: {"configured": bool(self.get(name)), "environment": False}
-            for name in ["openrouter", "tavily"]
-        }
+        return {name: {"configured": bool(self.get(name)), "environment": False} for name in ["openrouter"]}
 
 
 def main():
@@ -64,6 +61,11 @@ def main():
             catalogue.loaded_at = time.monotonic()
 
         catalogue.refresh = refresh_catalogue
+
+        async def healthy_research():
+            return {"ok": True, "ready": True, "paid_escalation": "disabled"}
+
+        app.state.research.search.health = healthy_research
         try:
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch()
@@ -161,6 +163,10 @@ def main():
                 ).to_be_visible()
                 page.get_by_role("button", name="Settings", exact=True).click()
                 expect(page.get_by_role("heading", name="Research connections", exact=True)).to_be_visible()
+                expect(page.get_by_role("heading", name="Self-hosted research", exact=True)).to_be_visible()
+                expect(page.get_by_label("tavily API key", exact=True)).to_have_count(0)
+                page.get_by_role("button", name="Check connections", exact=True).click()
+                expect(page.locator(".self-hosted-research")).to_contain_text("connected")
                 page.get_by_label("openrouter API key", exact=True).fill("synthetic-not-a-real-key")
                 page.get_by_role("button", name="Save key", exact=True).first.click()
                 expect(page.get_by_text("Key saved in Keychain", exact=True)).to_be_visible()

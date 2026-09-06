@@ -10,6 +10,7 @@ from customer_intelligence.models import (
     Candidates,
     ChatAnswer,
     InputReview,
+    ResearchGaps,
     Settings,
     Source,
     Verification,
@@ -44,7 +45,7 @@ async def configured_research(tmp_path, secrets, monkeypatch, saver, fail_once=F
     research = Research(store, secrets, saver)
     calls = {"read": 0, "search": 0, "verify": 0, "roles": [], "preparations": []}
 
-    async def read(self, url, domain):
+    async def read(run_id, url, domain):
         calls["read"] += 1
         return Source(
             title="Engineering handbook",
@@ -86,6 +87,13 @@ async def configured_research(tmp_path, secrets, monkeypatch, saver, fail_once=F
                     )
                 ]
             )
+        if schema is ResearchGaps:
+            return ResearchGaps(
+                sufficient=True,
+                gaps=[],
+                confidence=0.8,
+                explanation="Synthetic fixture has sufficient evidence.",
+            )
         if schema is InputReview:
             return InputReview(observations=[], hypotheses=[])
         if schema is Verification:
@@ -111,7 +119,12 @@ async def configured_research(tmp_path, secrets, monkeypatch, saver, fail_once=F
         references(brief)
         return Assessment.model_validate(brief)
 
-    monkeypatch.setattr("customer_intelligence.research.PublicReader.read", read)
+    research.search.read = read
+
+    async def healthy():
+        return {"ready": True}
+
+    research.search.health = healthy
     research.search.search = search
     research.model.prepare = prepare
     research.model.structured = structured

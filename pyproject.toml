@@ -5,11 +5,21 @@ description = "Evidence-led account research on your Mac"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
 dependencies = [
-  "fastapi>=0.115,<1", "uvicorn>=0.34,<1", "pydantic>=2.10,<3",
-  "langgraph>=1,<2", "langgraph-checkpoint-sqlite>=3,<4",
-  "httpx>=0.28,<1", "trafilatura>=2,<3", "playwright>=1.50,<2",
-  "pypdf>=5,<7", "python-docx>=1.1,<2", "python-multipart>=0.0.20,<1",
-  "keyring>=25,<26", "certifi>=2025", "aiosqlite>=0.21,<1",
+  "fastapi>=0.115,<1",
+  "uvicorn>=0.34,<1",
+  "pydantic>=2.10,<3",
+  "langgraph>=1,<2",
+  "langgraph-checkpoint-sqlite>=3,<4",
+  "httpx>=0.28,<1",
+  "trafilatura>=2,<3",
+  "playwright>=1.50,<2",
+  "pypdf>=5,<7",
+  "python-docx>=1.1,<2",
+  "python-multipart>=0.0.20,<1",
+  "keyring>=25,<26",
+  "certifi>=2025",
+  "aiosqlite>=0.21,<1",
+  "mcp>=1.25,<2",
 ]
 
 [dependency-groups]
@@ -17,6 +27,11 @@ dev = ["pytest>=8,<10", "pytest-asyncio>=0.25,<2", "ruff>=0.11,<1"]
 
 [project.scripts]
 customer-intelligence = "customer_intelligence.cli:main"
+
+[project.optional-dependencies]
+crawl = [
+    "crawl4ai>=0.9,<0.10",
+]
 
 [build-system]
 requires = ["hatchling"]

@@ -355,3 +355,8 @@ mark {background: transparent; color: inherit}
   .model-toolbar > div {gap: 15px; align-items: flex-start}
   .model-toolbar button {min-height: 44px}
 }
+.self-hosted-research {border-top: 1px solid var(--line); padding: 23px 0 12px}
+.self-hosted-research h3 {font-size: 14px; margin-bottom: 10px}
+.self-hosted-research p {color: #686574; font-size: 12px; line-height: 1.8; margin: 9px 0}
+.self-hosted-research code {font-size: 12px; color: #4c3ca0}
+.claim-label.inference {color: #5b49b7; background: #efedf9}

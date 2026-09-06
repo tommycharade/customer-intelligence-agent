@@ -4,7 +4,7 @@ import {api, dateLabel, statusLabel} from './api'
 import type {CatalogueModel, ModelCatalogue, ModelRole, ReasoningEffort, RoleModel, TaskModels} from './types'
 
 export const modelRoles: {id: ModelRole; title: string; description: string}[] = [
-  {id: 'extraction', title: 'Search and extraction', description: 'Identify candidate companies and extract observations from supplied notes. Tavily performs the searches.'},
+  {id: 'extraction', title: 'Search and extraction', description: 'Identify candidate companies and extract observations from supplied notes. Your self-hosted SearXNG service performs the searches.'},
   {id: 'research', title: 'Research and account chat', description: 'Assess fit, draft account briefs, make corrections and answer questions about saved evidence.'},
   {id: 'review', title: 'Final evidence review', description: 'Independently check every proposed brief and chat answer against its original sources.'},
 ]
